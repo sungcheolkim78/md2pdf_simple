@@ -122,6 +122,9 @@ class MarkdownParser:
         if self.verbose:
             print("Converting to HTML...")
         html = self.md.convert(processed_text)
+        print("--------------------------------")
+        print(html)
+        print("--------------------------------")
         
         return html
     

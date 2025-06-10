@@ -76,6 +76,25 @@ class HTMLToPDFConverter:
             spaceBefore=6
         ))
         
+        # Language-specific code styles
+        self.styles.add(ParagraphStyle(
+            name='MarkdownCodePython',
+            parent=self.styles['MarkdownCode'],
+            textColor='#0000FF'  # Blue for Python
+        ))
+        
+        self.styles.add(ParagraphStyle(
+            name='MarkdownCodeJavaScript',
+            parent=self.styles['MarkdownCode'],
+            textColor='#008000'  # Green for JavaScript
+        ))
+        
+        self.styles.add(ParagraphStyle(
+            name='MarkdownCodeShell',
+            parent=self.styles['MarkdownCode'],
+            textColor='#800000'  # Maroon for Shell
+        ))
+        
         # Blockquote style
         self.styles.add(ParagraphStyle(
             name='BlockQuote',
@@ -183,12 +202,25 @@ class HTMLToPDFConverter:
                 print(f"Failed to process image from {src}: {e}")
             return None
     
+    def _get_code_style(self, language: str) -> str:
+        """Get the appropriate code style based on language."""
+        language = language.lower() if language else ''
+        if language == 'python':
+            return 'MarkdownCodePython'
+        elif language in ['javascript', 'js']:
+            return 'MarkdownCodeJavaScript'
+        elif language in ['shell', 'bash', 'sh']:
+            return 'MarkdownCodeShell'
+        return 'MarkdownCode'
+    
     def _html_to_story(self, html: str):
         """Convert HTML to ReportLab story elements."""
         # Simple HTML parsing - split by major tags
         lines = html.split('\n')
         current_paragraph = []
         in_code_block = False
+        current_code_block = []
+        current_language = None
         in_list = False
         
         for line in lines:
@@ -196,46 +228,90 @@ class HTMLToPDFConverter:
             if not line:
                 continue
             
-            # Handle headings
-            if line.startswith('<h1>'):
-                if current_paragraph:
-                    self._add_paragraph('\n'.join(current_paragraph))
-                    current_paragraph = []
-                
-                text = re.sub(r'</?h1>', '', line) + '\n'
-                self.story.append(Paragraph(text, self.styles['CustomHeading1']))
-                self.story.append(Spacer(1, 12))  # Add space after h1
-                continue
-            
-            elif line.startswith('<h2>'):
-                if current_paragraph:
-                    self._add_paragraph('\n'.join(current_paragraph))
-                    current_paragraph = []
-                
-                text = re.sub(r'</?h2>', '', line) + '\n'
-                self.story.append(Paragraph(text, self.styles['CustomHeading2']))
-                self.story.append(Spacer(1, 10))  # Add space after h2
-                continue
-            
-            elif line.startswith('<h3>'):
-                if current_paragraph:
-                    self._add_paragraph('\n'.join(current_paragraph))
-                    current_paragraph = []
-                
-                text = re.sub(r'</?h3>', '', line) + '\n'
-                self.story.append(Paragraph(text, self.styles['CustomHeading3']))
-                self.story.append(Spacer(1, 8))  # Add space after h3
-                continue
-            
             # Handle code blocks
-            elif '<code>' in line or '<pre>' in line:
+            if '<code' in line or '<pre' in line:
                 if current_paragraph:
                     self._add_paragraph('\n'.join(current_paragraph))
                     current_paragraph = []
                 
-                code_text = re.sub(r'</?(?:code|pre)>', '', line)
+                # Check if this is the start of a code block
+                if not in_code_block:
+                    in_code_block = True
+                    # Extract language class if present
+                    lang_match = re.search(r'class=["\']language-([^"\']+)["\']', line)
+                    current_language = lang_match.group(1) if lang_match else None
+                    # Remove the opening tag and get initial content
+                    line = re.sub(r'<[^>]+>', '', line)
+                    if line.strip():
+                        current_code_block.append(line)
+                else:
+                    # Inside code block, just add the line
+                    current_code_block.append(line)
+                continue
+            
+            # Check for end of code block
+            if in_code_block and ('</code>' in line or '</pre>' in line):
+                # Remove the closing tag and add any remaining content
+                line = re.sub(r'</[^>]+>', '', line)
+                if line.strip():
+                    current_code_block.append(line)
+                
+                # Process the complete code block
+                code_text = '\n'.join(current_code_block)
                 code_text = self._clean_html_tags(code_text)
-                self.story.append(Paragraph(code_text, self.styles['MarkdownCode']))
+                print(code_text)
+                
+                # Use appropriate style based on language
+                style_name = self._get_code_style(current_language)
+                self.story.append(Paragraph(code_text, self.styles[style_name]))
+                
+                # Reset code block state
+                in_code_block = False
+                current_code_block = []
+                current_language = None
+                continue
+            
+            # If we're inside a code block, collect the lines
+            if in_code_block:
+                current_code_block.append(line)
+                continue
+            
+            # Handle headings
+            if line.startswith('<h1'):
+                if current_paragraph:
+                    self._add_paragraph('\n'.join(current_paragraph))
+                    current_paragraph = []
+                
+                # Extract heading text and ID if present
+                heading_match = re.match(r'<h1(?:\s+id="([^"]+)")?>(.*?)</h1>', line)
+                if heading_match:
+                    heading_id, text = heading_match.groups()
+                    # For now we just use the text, but we could use the ID for TOC or links
+                    self.story.append(Paragraph(text, self.styles['CustomHeading1']))
+                continue
+            
+            elif line.startswith('<h2'):
+                if current_paragraph:
+                    self._add_paragraph('\n'.join(current_paragraph))
+                    current_paragraph = []
+                
+                # Extract heading text and ID if present
+                heading_match = re.match(r'<h2(?:\s+id="([^"]+)")?>(.*?)</h2>', line)
+                if heading_match:
+                    heading_id, text = heading_match.groups()
+                    self.story.append(Paragraph(text, self.styles['CustomHeading2']))
+                continue
+            
+            elif line.startswith('<h3'):
+                if current_paragraph:
+                    self._add_paragraph('\n'.join(current_paragraph))
+                    current_paragraph = []
+                
+                # Extract heading text and ID if present
+                heading_match = re.match(r'<h3(?:\s+id="([^"]+)")?>(.*?)</h3>', line)
+                if heading_match:
+                    heading_id, text = heading_match.groups()
+                    self.story.append(Paragraph(text, self.styles['CustomHeading3']))
                 continue
             
             # Handle images
@@ -310,11 +386,12 @@ class HTMLToPDFConverter:
         # Build PDF
         doc = SimpleDocTemplate(
             str(output_path),
-            pagesize=A4,
+            pagesize=letter,
             rightMargin=72,
             leftMargin=72,
             topMargin=72,
-            bottomMargin=72
+            bottomMargin=72,
+            author="Sung-Cheol Kim",
         )
         
         doc.build(self.story)
